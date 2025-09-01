@@ -331,7 +331,7 @@ async def about_command(message: Message):
 
 @dp.message()
 async def get_yml(message: Message):
-    # Игнорируем команды, которые уже обработаны
+
     if message.text.startswith('/'):
         return
 
@@ -348,7 +348,6 @@ async def get_yml(message: Message):
 
 async def main():
     try:
-        # Запускаем HTTP сервер в отдельной задаче asyncio
         asyncio.create_task(run_http_server_async())
 
         # Запускаем бота
@@ -358,7 +357,6 @@ async def main():
 
 
 async def run_http_server_async():
-
     app = web.Application()
 
     async def handle(request):
