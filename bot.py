@@ -14,7 +14,6 @@ import threading
 
 
 def run_http_server():
-    """Запускает простой HTTP сервер в отдельном потоке"""
 
     async def handle(request):
         return web.Response(text="Bot is running!")
@@ -22,7 +21,6 @@ def run_http_server():
     app = web.Application()
     app.router.add_get('/', handle)
 
-    # Можно также добавить health check endpoint
     async def health_check(request):
         return web.json_response({"status": "ok", "service": "yml-checker-bot"})
 
@@ -150,7 +148,6 @@ def is_yml_catalog(text: str) -> bool:
     """Проверяет, является ли текст YML-каталогом"""
     text_lower = text.lower()
 
-    # Проверяем различные признаки YML
     yml_indicators = [
         "<yml_catalog",
         "yandex-market",
@@ -165,13 +162,11 @@ def is_yml_catalog(text: str) -> bool:
         "<categories>"
     ]
 
-    # Должен содержать хотя бы один основной индикатор
     main_indicators = ["<yml_catalog", "yandex-market", "yandex.market"]
 
     has_main_indicator = any(indicator in text_lower for indicator in main_indicators)
     has_any_indicator = any(indicator in text_lower for indicator in yml_indicators)
 
-    # Также проверяем структуру XML
     is_xml_like = text.strip().startswith('<?xml') or '<' in text and '>' in text
 
     return has_main_indicator or (has_any_indicator and is_xml_like)
@@ -190,7 +185,6 @@ async def check_yml(site: str) -> Optional[str]:
 
         clean_site = clean_url(site)
 
-        # Специальная обработка для InSales (myinsales.ru поддомен)
         if ".myinsales.ru" not in clean_site and "insales" not in clean_site:
             insales_url = f"https://{clean_site}.myinsales.ru/market.yml"
             try:
@@ -205,9 +199,7 @@ async def check_yml(site: str) -> Optional[str]:
             except:
                 pass
 
-        # Специальная обработка для Ecwid (ecwid.com поддомен)
         if ".ecwid.com" not in clean_site and "ecwid" not in clean_site:
-            # Пробуем найти ID магазина в основном домене
             ecwid_url = f"https://{clean_site}.ecwid.com/market.xml"
             try:
                 async with session.get(ecwid_url, allow_redirects=True) as resp:
@@ -229,7 +221,6 @@ async def check_yml(site: str) -> Optional[str]:
                     logging.info(f"Проверяем: {url}")
 
                     async with session.get(url, allow_redirects=True) as resp:
-                        # Проверяем статус и content-type
                         if resp.status == 200:
                             content_type = resp.headers.get('Content-Type', '').lower()
 
@@ -238,7 +229,6 @@ async def check_yml(site: str) -> Optional[str]:
                                    ['xml', 'text', 'application/xml', 'text/xml', 'application/yaml', 'text/yaml']):
                                 text = await resp.text()
 
-                                # Более гибкая проверка YML
                                 if is_yml_catalog(text):
                                     logging.info(f"✅ Найден YML: {url}")
                                     return url
@@ -342,7 +332,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Запускаем HTTP сервер в отдельном потоке
     server_thread = threading.Thread(target=run_http_server, daemon=True)
     server_thread.start()
 
