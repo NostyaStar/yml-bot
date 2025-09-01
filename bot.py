@@ -9,7 +9,26 @@ from typing import Optional
 import re
 import os
 from aiogram.client.default import DefaultBotProperties
+from aiohttp import web
+import threading
 
+
+def run_http_server():
+    """Запускает простой HTTP сервер в отдельном потоке"""
+
+    async def handle(request):
+        return web.Response(text="Bot is running!")
+
+    app = web.Application()
+    app.router.add_get('/', handle)
+
+    # Можно также добавить health check endpoint
+    async def health_check(request):
+        return web.json_response({"status": "ok", "service": "yml-checker-bot"})
+
+    app.router.add_get('/health', health_check)
+
+    web.run_app(app, host='0.0.0.0', port=8080)
 
 API_TOKEN = os.getenv("API_TOKEN", "8374508374:AAGFkSRbZpTJ53QeS5wbpZVLzxOqvQ3BcR4")
 
@@ -38,6 +57,7 @@ YML_PATHS = [
     "/bitrix/catalog_export/yandex_run.php",
     "/bitrix/catalog_export/ym.php",
     "/bitrix/components/bitrix/catalog.export/.default/export.php",
+    "/bitrix/catalog_export/export_BKi.xml",
 
     # InSales
     "/market.yml",
@@ -322,4 +342,8 @@ async def main():
 
 
 if __name__ == "__main__":
+    # Запускаем HTTP сервер в отдельном потоке
+    server_thread = threading.Thread(target=run_http_server, daemon=True)
+    server_thread.start()
+
     asyncio.run(main())
