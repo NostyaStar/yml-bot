@@ -14,7 +14,7 @@ import threading
 
 
 def run_http_server():
-    """Запускает простой HTTP сервер в отдельном потоке"""
+
 
     async def handle(request):
         return web.Response(text="Bot is running!")
@@ -22,13 +22,26 @@ def run_http_server():
     app = web.Application()
     app.router.add_get('/', handle)
 
-    # Можно также добавить health check endpoint
     async def health_check(request):
         return web.json_response({"status": "ok", "service": "yml-checker-bot"})
 
     app.router.add_get('/health', health_check)
 
-    web.run_app(app, host='0.0.0.0', port=8080)
+
+    async def start_server():
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host='0.0.0.0', port=8080)
+        await site.start()
+        print("HTTP server started on port 8080")
+
+        await asyncio.Event().wait()
+
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_server())
+
 
 API_TOKEN = os.getenv("API_TOKEN", "8374508374:AAGFkSRbZpTJ53QeS5wbpZVLzxOqvQ3BcR4")
 
@@ -139,7 +152,7 @@ ssl_context.verify_mode = ssl.CERT_NONE
 
 
 def clean_url(url: str) -> str:
-    """Очищает URL от протокола и лишних символов"""
+
     url = url.strip()
     url = re.sub(r'^https?://', '', url)
     url = url.rstrip('/')
@@ -147,7 +160,7 @@ def clean_url(url: str) -> str:
 
 
 def is_yml_catalog(text: str) -> bool:
-    """Проверяет, является ли текст YML-каталогом"""
+
     text_lower = text.lower()
 
     # Проверяем различные признаки YML
@@ -171,14 +184,14 @@ def is_yml_catalog(text: str) -> bool:
     has_main_indicator = any(indicator in text_lower for indicator in main_indicators)
     has_any_indicator = any(indicator in text_lower for indicator in yml_indicators)
 
-    # Также проверяем структуру XML
+
     is_xml_like = text.strip().startswith('<?xml') or '<' in text and '>' in text
 
     return has_main_indicator or (has_any_indicator and is_xml_like)
 
 
 async def check_yml(site: str) -> Optional[str]:
-    """Проверяем все популярные пути YML и возвращаем рабочую ссылку или главную"""
+
     schemes = ["https://", "http://"]
     connector = aiohttp.TCPConnector(ssl=ssl_context, limit=20)
 
@@ -190,7 +203,7 @@ async def check_yml(site: str) -> Optional[str]:
 
         clean_site = clean_url(site)
 
-        # Специальная обработка для InSales (myinsales.ru поддомен)
+
         if ".myinsales.ru" not in clean_site and "insales" not in clean_site:
             insales_url = f"https://{clean_site}.myinsales.ru/market.yml"
             try:
@@ -205,7 +218,7 @@ async def check_yml(site: str) -> Optional[str]:
             except:
                 pass
 
-        # Специальная обработка для Ecwid (ecwid.com поддомен)
+
         if ".ecwid.com" not in clean_site and "ecwid" not in clean_site:
             # Пробуем найти ID магазина в основном домене
             ecwid_url = f"https://{clean_site}.ecwid.com/market.xml"
@@ -229,11 +242,11 @@ async def check_yml(site: str) -> Optional[str]:
                     logging.info(f"Проверяем: {url}")
 
                     async with session.get(url, allow_redirects=True) as resp:
-                        # Проверяем статус и content-type
+
                         if resp.status == 200:
                             content_type = resp.headers.get('Content-Type', '').lower()
 
-                            # Проверяем различные content-types
+
                             if any(x in content_type for x in
                                    ['xml', 'text', 'application/xml', 'text/xml', 'application/yaml', 'text/yaml']):
                                 text = await resp.text()
@@ -333,17 +346,36 @@ async def get_yml(message: Message):
         await message.answer("❌ Не удалось найти доступный сайт")
 
 
-
 async def main():
     try:
+        # Запускаем HTTP сервер в отдельной задаче asyncio
+        asyncio.create_task(run_http_server_async())
+
+        # Запускаем бота
         await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Bot error: {e}")
 
 
-if __name__ == "__main__":
-    # Запускаем HTTP сервер в отдельном потоке
-    server_thread = threading.Thread(target=run_http_server, daemon=True)
-    server_thread.start()
+async def run_http_server_async():
 
+    app = web.Application()
+
+    async def handle(request):
+        return web.Response(text="Bot is running!")
+
+    async def health_check(request):
+        return web.json_response({"status": "ok", "service": "yml-checker-bot"})
+
+    app.router.add_get('/', handle)
+    app.router.add_get('/health', health_check)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host='0.0.0.0', port=8080)
+    await site.start()
+    logger.info("HTTP server started on port 8080")
+
+
+if __name__ == "__main__":
     asyncio.run(main())
