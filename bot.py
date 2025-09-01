@@ -1,15 +1,17 @@
 import logging
 import aiohttp
 import ssl
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import CommandStart, Command
 import asyncio
 from typing import Optional
 import re
 import os
+from aiogram.client.default import DefaultBotProperties
 
-API_TOKEN = os.getenv('BOT_TOKEN', "8374508374:AAGFkSRbZpTJ53QeS5wbpZVLzxOqvQ3BcR4")
+
+API_TOKEN = os.getenv("API_TOKEN", "8374508374:AAGFkSRbZpTJ53QeS5wbpZVLzxOqvQ3BcR4")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,29 +19,50 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=API_TOKEN)
+bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
 YML_PATHS = [
-    # Основные пути
+    # Основные универсальные пути
     "/yandex.xml",
     "/yml.xml",
     "/market.yml",
     "/yandex-market.xml",
     "/export/yml.xml",
+    "/market.xml",
+    "/yandex.yml",
+    "/export.xml",
 
-    # Wildberries и другие крупные магазины
-    "/seller-feed.xml",
-    "/wb-feed.xml",
-    "/ozon-feed.xml",
-    "/market.yaml",
-
-    # Bitrix
+    # 1С-Битрикс
     "/bitrix/catalog_export/yandex.php",
+    "/bitrix/catalog_export/yandex_run.php",
+    "/bitrix/catalog_export/ym.php",
     "/bitrix/components/bitrix/catalog.export/.default/export.php",
 
-    # WordPress
+    # InSales
+    "/market.yml",
+
+    # Ecwid
+    "/market.xml",
+
+    # CS-Cart
+    "/yml.php",
+
+    # OpenCart
+    "/index.php?dispatch=yml.export",
+    "/index.php?route=feed/yandex_market",
+    "/index.php?route=extension/feed/yandex",
+
+    # PrestaShop
+    "/modules/yamarket/yml.xml",
+    "/modules/yamarket/export.yml",
+    "/modules/ymlfeed/export.xml",
+    "/modules/yml/yandex_market.xml",
+
+    # WooCommerce (WordPress)
     "/wp-content/uploads/yml/yandex.xml",
+    "/wp-content/uploads/woo-yml.xml",
+    "/wp-content/plugins/yml-for-yandex/export.xml",
     "/wp-content/uploads/feed-yml-0.xml",
     "/wp-content/uploads/feed-yml-1.xml",
     "/wp-content/uploads/feed-yml-2.xml",
@@ -51,15 +74,23 @@ YML_PATHS = [
     "/wp-content/uploads/feed-yml-8.xml",
     "/wp-content/uploads/feed-yml-9.xml",
 
-    # Другие CMS
-    "/yml.php",
-    "/modules/yamarket/export.yml",
-    "/index.php?route=feed/yandex_market",
+    # Shopify
     "/apps/yandex/export.yml",
+
+    # RetailCRM / МойСклад
     "/export/yandex.yml",
     "/exchange/yandex_market.xml",
 
-    # Дополнительные пути
+    # UMI.CMS
+    "/yandex-market.xml",
+    "/umi-yml.xml",
+
+    # Другие CMS и универсальные пути
+    "/var/yml/yandex_market.xml",
+    "/export/yml.php",
+    "/feeds/yml.xml",
+    "/yandex_market.xml",
+    "/files/export/yandex.xml",
     "/upload/iblock/export/yandex.xml",
     "/upload/yandex.xml",
     "/catalog/export/yandex",
@@ -67,6 +98,12 @@ YML_PATHS = [
     "/data/feed/yandex.xml",
     "/feeds/yandex.xml",
     "/xml/yandex.xml",
+
+    # Wildberries и Ozon
+    "/seller-feed.xml",
+    "/wb-feed.xml",
+    "/ozon-feed.xml",
+    "/market.yaml",
 ]
 
 HEADERS = {
@@ -93,6 +130,7 @@ def is_yml_catalog(text: str) -> bool:
     """Проверяет, является ли текст YML-каталогом"""
     text_lower = text.lower()
 
+    # Проверяем различные признаки YML
     yml_indicators = [
         "<yml_catalog",
         "yandex-market",
@@ -107,10 +145,13 @@ def is_yml_catalog(text: str) -> bool:
         "<categories>"
     ]
 
+    # Должен содержать хотя бы один основной индикатор
     main_indicators = ["<yml_catalog", "yandex-market", "yandex.market"]
 
     has_main_indicator = any(indicator in text_lower for indicator in main_indicators)
     has_any_indicator = any(indicator in text_lower for indicator in yml_indicators)
+
+    # Также проверяем структуру XML
     is_xml_like = text.strip().startswith('<?xml') or '<' in text and '>' in text
 
     return has_main_indicator or (has_any_indicator and is_xml_like)
@@ -129,20 +170,65 @@ async def check_yml(site: str) -> Optional[str]:
 
         clean_site = clean_url(site)
 
+        # Специальная обработка для InSales (myinsales.ru поддомен)
+        if ".myinsales.ru" not in clean_site and "insales" not in clean_site:
+            insales_url = f"https://{clean_site}.myinsales.ru/market.yml"
+            try:
+                async with session.get(insales_url, allow_redirects=True) as resp:
+                    if resp.status == 200:
+                        content_type = resp.headers.get('Content-Type', '').lower()
+                        if any(x in content_type for x in
+                               ['xml', 'text', 'application/xml', 'text/xml', 'application/yaml']):
+                            text = await resp.text()
+                            if is_yml_catalog(text):
+                                return insales_url
+            except:
+                pass
+
+        # Специальная обработка для Ecwid (ecwid.com поддомен)
+        if ".ecwid.com" not in clean_site and "ecwid" not in clean_site:
+            # Пробуем найти ID магазина в основном домене
+            ecwid_url = f"https://{clean_site}.ecwid.com/market.xml"
+            try:
+                async with session.get(ecwid_url, allow_redirects=True) as resp:
+                    if resp.status == 200:
+                        content_type = resp.headers.get('Content-Type', '').lower()
+                        if any(x in content_type for x in ['xml', 'text', 'application/xml', 'text/xml']):
+                            text = await resp.text()
+                            if is_yml_catalog(text):
+                                return ecwid_url
+            except:
+                pass
+
+        # Проверка всех остальных путей
         for scheme in schemes:
             for path in YML_PATHS:
                 url = f"{scheme}{clean_site}{path}"
 
                 try:
+                    logging.info(f"Проверяем: {url}")
+
                     async with session.get(url, allow_redirects=True) as resp:
+                        # Проверяем статус и content-type
                         if resp.status == 200:
                             content_type = resp.headers.get('Content-Type', '').lower()
-                            if any(x in content_type for x in ['xml', 'text', 'application/xml', 'text/xml']):
+
+                            # Проверяем различные content-types
+                            if any(x in content_type for x in
+                                   ['xml', 'text', 'application/xml', 'text/xml', 'application/yaml', 'text/yaml']):
                                 text = await resp.text()
+
+                                # Более гибкая проверка YML
                                 if is_yml_catalog(text):
+                                    logging.info(f"✅ Найден YML: {url}")
                                     return url
 
-                except Exception:
+                except aiohttp.ClientConnectorError:
+                    continue
+                except aiohttp.ServerTimeoutError:
+                    continue
+                except Exception as e:
+                    logging.warning(f"Ошибка для {url}: {e}")
                     continue
 
         # Если YML не найден, возвращаем главную страницу
@@ -160,108 +246,79 @@ async def check_yml(site: str) -> Optional[str]:
 
 @dp.message(CommandStart())
 async def start(message: Message):
-    welcome_text = """
-    🤖 <b>YML Validator Bot</b>
-
-    Я помогу найти YML-каталоги на вашем сайте!
-
-    📋 <b>Доступные команды:</b>
-    /check - Проверить сайт
-    /help - Помощь и инструкция
-    /about - О боте
-
-    🚀 <b>Просто отправьте мне адрес сайта!</b>
-    """
-    await message.answer(welcome_text, parse_mode='HTML')
+    await message.answer("Привет! 👋 Введи название сайта (например: wildberries.ru), и я проверю YML каталог.")
 
 
 @dp.message(Command("help"))
 async def help_command(message: Message):
     help_text = """
-    📖 <b>Инструкция по использованию:</b>
+📖 Инструкция по использованию бота:
 
-    1. Отправьте адрес сайта (например: example.com)
-    2. Бот проверит более 50 возможных путей к YML-каталогам
-    3. Если найдет - вернет ссылку на каталог
-    4. Если нет - вернет ссылку на главную страницу
+1. Просто отправьте мне домен сайта (например: wildberries.ru)
+2. Я проверю более 50 популярных путей к YML-каталогам
+3. Если найду YML - покажу прямую ссылку на него
+4. Если не найду - покажу главную страницу сайта
 
-    🔍 <b>Поддерживаемые CMS:</b>
-    • 1С-Битрикс
-    • WordPress + WooCommerce
-    • OpenCart
-    • CS-Cart
-    • PrestaShop
-    • InSales
-    • Ecwid
+💡 Примеры использования:
+- `wildberries.ru`
+- `ozon.ru`
+- `example.com`
 
-    💡 <b>Совет:</b> Можно отправлять сайты без http/https
+Бот поддерживает проверку для всех популярных CMS:
+- 1С-Битрикс, InSales, Ecwid
+- WooCommerce, Shopify
+- OpenCart, PrestaShop, CS-Cart
+- И многих других
     """
-    await message.answer(help_text, parse_mode='HTML')
+    await message.answer(help_text)
+
+
+@dp.message(Command("check"))
+async def check_command(message: Message):
+    await message.answer("🔍 Для проверки сайта просто отправьте мне его домен (например: wildberries.ru)")
 
 
 @dp.message(Command("about"))
 async def about_command(message: Message):
     about_text = """
-    ℹ️ <b>О YML Validator Bot</b>
+🤖 О боте
 
-    Этот бот создан для автоматического поиска YML-каталогов на сайтах.
+Этот бот помогает находить YML-каталоги на сайтах. YML (Yandex Market Language) - это формат для выгрузки товаров в маркетплейсы.
 
-    <b>Возможности:</b>
-    • Проверка 50+ путей к YML-каталогам
-    • Поддержка всех популярных CMS
-    • Автоматическое определение протокола
-    • Быстрая асинхронная проверка
+📊 Что умеет бот:
+- Проверять более 50 популярных путей к YML-каталогам
+- Работать с различными CMS и платформами
+- Находить каталоги для Яндекс.Маркета, Wildberries, Ozon
+- Автоматически определять структуру сайта
 
-    <b>Технологии:</b>
-    • Python 3.11+
-    • Aiogram 3.x
-    • AsyncIO для быстрых запросов
+⚡ Быстро и удобно!
     """
-    await message.answer(about_text, parse_mode='HTML')
+    await message.answer(about_text)
 
 
-@dp.message(Command("check"))
-async def check_command(message: Message):
-    await message.answer("🔍 Отправьте мне адрес сайта для проверки (например: example.com)")
+@dp.message()
+async def get_yml(message: Message):
+    # Игнорируем команды, которые уже обработаны
+    if message.text.startswith('/'):
+        return
 
-
-@dp.message(F.text & ~F.text.startswith('/'))
-async def handle_website(message: Message):
     site = message.text.strip()
-
     await message.answer(f"🔎 Проверяю {site}...")
 
     result_url = await check_yml(site)
 
     if result_url:
-        await message.answer(f"✅ <b>Найден YML каталог:</b>\n<code>{result_url}</code>", parse_mode='HTML')
+        await message.answer(f"🔗 Результат:\n{result_url}")
     else:
-        await message.answer("❌ YML каталог не найден")
+        await message.answer("❌ Не удалось найти доступный сайт")
 
-
-async def set_bot_commands():
-    """Устанавливаем команды бота"""
-    commands = [
-        types.BotCommand(command="start", description="Запустить бота"),
-        types.BotCommand(command="help", description="Помощь и инструкция"),
-        types.BotCommand(command="check", description="Проверить сайт"),
-        types.BotCommand(command="about", description="О боте")
-    ]
-    await bot.set_my_commands(commands)
 
 
 async def main():
-    """Запуск бота с бесконечным циклом"""
-    await set_bot_commands()
-    await bot.set_my_description("🤖 Бот для поиска YML-каталогов на сайтах")
-
-    while True:
-        try:
-            logger.info("Бот запущен...")
-            await dp.start_polling(bot)
-        except Exception as e:
-            logger.error(f"Ошибка: {e}, перезапуск через 10 секунд...")
-            await asyncio.sleep(10)
+    try:
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"Bot error: {e}")
 
 
 if __name__ == "__main__":
