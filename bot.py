@@ -148,79 +148,73 @@ def clean_url(url: str) -> str:
 
 
 def is_yml_catalog(text: str) -> bool:
-    """
-    Улучшенная проверка YML-каталога
-    Принимает различные форматы YML/XML каталогов
-    """
-    # Очищаем текст и приводим к нижнему регистру
+    # Очищаем текст от лишних пробелов и приводим к нижнему регистру
     text_clean = ' '.join(text.strip().split()).lower()
 
-    # Проверяем первые 7 строк на наличие "yandex"
-    first_lines = text.strip().split('\n')[:7]
-    has_yandex_in_header = any('yandex' in line.lower() for line in first_lines)
-
-    # Различные форматы YML каталогов
-    yml_formats = [
-        # Стандартный Yandex.Market
-        ("<yml_catalog", ["<shop>", "<offers>", "<offer"]),
-        # Альтернативные форматы
-        ("<catalog", ["<product", "<item", "<offer"]),
-        ("<products", ["<product", "<item"]),
-        ("<offers", ["<offer"]),
-        ("<items", ["<item"]),
-        # Просто наличие товаров
-        ("<offer", ["id=", "available="]),
-        ("<product", ["id=", "price="]),
-        ("<item", ["id=", "price="])
+    # Основные обязательные признаки настоящего YML-каталога
+    required_indicators = [
+        "<yml_catalog",
+        "<shop>",
+        "<offers>",
+        "<offer id=",
+        "<category id=",
+        "<currency id="
     ]
 
-    # Проверяем различные форматы
-    for format_pattern, required_tags in yml_formats:
-        if format_pattern in text_clean:
-            # Проверяем наличие обязательных тегов для этого формата
-            has_required_tags = all(tag in text_clean for tag in required_tags)
-            if has_required_tags:
-                return True
+    # Дополнительные признаки для большей надежности
+    secondary_indicators = [
+        "yandex-market",
+        "yandex.market",
+        "</offer>",
+        "</category>",
+        "<price>",
+        "<url>",
+        "<picture>"
+    ]
 
-    # Дополнительные проверки для специфичных случаев
-    if any(tag in text_clean for tag in ["<currency", "<category", "<price>", "<url>"]):
-        # Проверяем, что это не просто HTML страница
-        if not any(html_tag in text_clean for html_tag in ["<html", "<body", "<div ", "<span ", "<!doctype html"]):
-            return True
+    # Проверяем наличие основных обязательных элементов
+    has_required = all(indicator in text_clean for indicator in required_indicators[:3])  # Первые 3 обязательны
 
-    # Если в первых строках есть "yandex" и это XML-подобный контент
-    if has_yandex_in_header and '<' in text and '>' in text:
-        # Исключаем HTML страницы
-        if not any(html_tag in text_clean for html_tag in ["<html", "<body", "<!doctype html", "<head>"]):
-            return True
+    # Если есть основные элементы, проверяем дополнительные для уверенности
+    if has_required:
+        # Должен быть хотя бы один дополнительный признак
+        has_secondary = any(indicator in text_clean for indicator in secondary_indicators)
+        return has_secondary
 
     return False
 
 
 def is_valid_yml_content(text: str) -> bool:
     """
-    Проверяет, что содержимое является валидным YML/XML каталогом
+    Более строгая проверка содержимого YML
     """
-    # Базовые проверки
-    if not text.strip():
+    # Проверяем базовую структуру
+    if not is_yml_catalog(text):
         return False
 
+    # Дополнительные проверки:
     text_lower = text.lower()
 
-    # Игнорируем HTML страницы
-    if any(html_tag in text_lower for html_tag in ["<html", "<body", "<!doctype html", "<head>"]):
-        return False
+    # Должен содержать товары (offers)
+    if '<offers>' in text_lower and '</offers>' in text_lower:
+        # Проверяем, что между тегами offers есть содержимое
+        offers_start = text_lower.find('<offers>') + len('<offers>')
+        offers_end = text_lower.find('</offers>')
+        offers_content = text_lower[offers_start:offers_end].strip()
 
-    # Игнорируем ошибки и пустые ответы
-    if any(error in text_lower for error in ["error", "not found", "404", "500", "403 forbidden"]):
-        return False
+        if not offers_content or '<offer' not in offers_content:
+            return False
 
-    # Проверяем, что это XML-подобный контент
-    if not ('<' in text and '>' in text):
-        return False
+    # Должен содержать категории
+    if '<categories>' in text_lower and '</categories>' in text_lower:
+        categories_start = text_lower.find('<categories>') + len('<categories>')
+        categories_end = text_lower.find('</categories>')
+        categories_content = text_lower[categories_start:categories_end].strip()
 
-    # Основная проверка на YML каталог
-    return is_yml_catalog(text)
+        if not categories_content or '<category' not in categories_content:
+            return False
+
+    return True
 
 
 async def check_yml(site: str) -> Optional[str]:
@@ -276,22 +270,13 @@ async def check_yml(site: str) -> Optional[str]:
                         if resp.status == 200:
                             content_type = resp.headers.get('Content-Type', '').lower()
 
-                            # Более широкий диапазон content-type
-                            valid_content_types = [
-                                'xml', 'text', 'application/xml', 'text/xml',
-                                'application/yaml', 'text/yaml', 'text/plain',
-                                'application/octet-stream'
-                            ]
-
-                            if any(x in content_type for x in valid_content_types):
+                            if any(x in content_type for x in
+                                   ['xml', 'text', 'application/xml', 'text/xml', 'application/yaml', 'text/yaml']):
                                 text = await resp.text()
 
-                                # Проверяем размер содержимого (исключаем очень маленькие файлы)
-                                if len(text.strip()) < 100:  # меньше 100 символов - скорее всего пустой
-                                    continue
-
+                                # Строгая проверка YML
                                 if is_valid_yml_content(text):
-                                    logging.info(f"✅ Найден YML: {url}")
+                                    logging.info(f"✅ Найден настоящий YML: {url}")
                                     return url
                                 else:
                                     logging.info(f"❌ Файл найден, но не является YML: {url}")
@@ -304,6 +289,7 @@ async def check_yml(site: str) -> Optional[str]:
                     logging.warning(f"Ошибка для {url}: {e}")
                     continue
 
+    # Если YML не найден, возвращаем None
     return None
 
 
@@ -319,7 +305,7 @@ async def help_command(message: Message):
 
 1. Просто отправьте мне домен сайта (например: wildberries.ru)
 2. Я проверю более 50 популярных путей к YML-каталогам
-3. Если найду YML - покажу прямую ссылку на него
+3. Если найду настоящий YML - покажу прямую ссылку на него
 4. Если не найду - покажу сообщение, что не удалось найти
 
 💡 Примеры использования:
@@ -327,7 +313,11 @@ async def help_command(message: Message):
 - `ozon.ru`
 - `example.com`
 
-Бот поддерживает различные форматы YML/XML каталогов
+Бот поддерживает проверку для всех популярных CMS:
+- 1С-Битрикс, InSales, Ecwid
+- WooCommerce, Shopify
+- OpenCart, PrestaShop, CS-Cart
+- И многих других
     """
     await message.answer(help_text)
 
@@ -342,13 +332,14 @@ async def about_command(message: Message):
     about_text = """
 🤖 О боте
 
-Этот бот помогает находить YML/XML каталоги товаров на сайтах.
+Этот бот помогает находить настоящие YML-каталоги на сайтах. YML (Yandex Market Language) - это формат для выгрузки товаров в маркетплейсы.
 
-📊 Поддерживаемые форматы:
-- Стандартный Yandex.Market (yml_catalog)
-- Альтернативные XML форматы
-- Каталоги товаров различных CMS
-- Выгрузки для маркетплейсов
+📊 Что умеет бот:
+- Проверять более 50 популярных путей к YML-каталогам
+- Работать с различными CMS и платформами
+- Находить каталоги для Яндекс.Маркета, Wildberries, Ozon
+- Автоматически определять структуру сайта
+- Отличать настоящие YML-каталоги от пустых файлов
 
 ⚡ Быстро и удобно!
     """
@@ -366,9 +357,9 @@ async def get_yml(message: Message):
     result_url = await check_yml(site)
 
     if result_url:
-        await message.answer(f"✅ Найден каталог товаров:\n{result_url}")
+        await message.answer(f"✅ Найден YML-каталог:\n{result_url}")
     else:
-        await message.answer("❌ Не получилось найти YML/XML каталог")
+        await message.answer("❌ Не получилось найти YML-каталог")
 
 
 async def main():
