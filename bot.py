@@ -12,7 +12,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiohttp import web
 
 
-
+# Запуск HTTP сервера для проверки здоровья
 async def run_http_server():
     app = web.Application()
 
@@ -148,46 +148,49 @@ def clean_url(url: str) -> str:
 
 
 def is_yml_catalog(text: str) -> bool:
-
-
+    """
+    Улучшенная проверка YML-каталога
+    Принимает различные форматы YML/XML каталогов
+    """
+    # Очищаем текст и приводим к нижнему регистру
     text_clean = ' '.join(text.strip().split()).lower()
 
-
+    # Проверяем первые 7 строк на наличие "yandex"
     first_lines = text.strip().split('\n')[:7]
     has_yandex_in_header = any('yandex' in line.lower() for line in first_lines)
 
-    # различные форматы YML каталогов
+    # Различные форматы YML каталогов
     yml_formats = [
-        # стандартный Yandex.Market
+        # Стандартный Yandex.Market
         ("<yml_catalog", ["<shop>", "<offers>", "<offer"]),
-        # альтернативные форматы
+        # Альтернативные форматы
         ("<catalog", ["<product", "<item", "<offer"]),
         ("<products", ["<product", "<item"]),
         ("<offers", ["<offer"]),
         ("<items", ["<item"]),
-        # просто наличие товаров
+        # Просто наличие товаров
         ("<offer", ["id=", "available="]),
         ("<product", ["id=", "price="]),
         ("<item", ["id=", "price="])
     ]
 
-    # проверяем различные форматы
+    # Проверяем различные форматы
     for format_pattern, required_tags in yml_formats:
         if format_pattern in text_clean:
-            # проверяем наличие обязательных тегов для этого формата
+            # Проверяем наличие обязательных тегов для этого формата
             has_required_tags = all(tag in text_clean for tag in required_tags)
             if has_required_tags:
                 return True
 
-    # дополнительные проверки
+    # Дополнительные проверки для специфичных случаев
     if any(tag in text_clean for tag in ["<currency", "<category", "<price>", "<url>"]):
-        # проверяем, что это не просто HTML страница
+        # Проверяем, что это не просто HTML страница
         if not any(html_tag in text_clean for html_tag in ["<html", "<body", "<div ", "<span ", "<!doctype html"]):
             return True
 
-
+    # Если в первых строках есть "yandex" и это XML-подобный контент
     if has_yandex_in_header and '<' in text and '>' in text:
-        # исключаем HTML страницы
+        # Исключаем HTML страницы
         if not any(html_tag in text_clean for html_tag in ["<html", "<body", "<!doctype html", "<head>"]):
             return True
 
@@ -195,26 +198,28 @@ def is_yml_catalog(text: str) -> bool:
 
 
 def is_valid_yml_content(text: str) -> bool:
-
-    # базовые проверки
+    """
+    Проверяет, что содержимое является валидным YML/XML каталогом
+    """
+    # Базовые проверки
     if not text.strip():
         return False
 
     text_lower = text.lower()
 
-    # игнорируем HTML страницы
+    # Игнорируем HTML страницы
     if any(html_tag in text_lower for html_tag in ["<html", "<body", "<!doctype html", "<head>"]):
         return False
 
-    # игнорируем ошибки и пустые ответы
+    # Игнорируем ошибки и пустые ответы
     if any(error in text_lower for error in ["error", "not found", "404", "500", "403 forbidden"]):
         return False
 
-    # проверяем, что это XML-подобный контент
+    # Проверяем, что это XML-подобный контент
     if not ('<' in text and '>' in text):
         return False
 
-    # основная проверка на YML каталог
+    # Основная проверка на YML каталог
     return is_yml_catalog(text)
 
 
@@ -230,7 +235,7 @@ async def check_yml(site: str) -> Optional[str]:
 
         clean_site = clean_url(site)
 
-
+        # Проверка для InSales
         if ".myinsales.ru" not in clean_site and "insales" not in clean_site:
             insales_url = f"https://{clean_site}.myinsales.ru/market.yml"
             try:
@@ -245,7 +250,7 @@ async def check_yml(site: str) -> Optional[str]:
             except:
                 pass
 
-
+        # Проверка для Ecwid
         if ".ecwid.com" not in clean_site and "ecwid" not in clean_site:
             ecwid_url = f"https://{clean_site}.ecwid.com/market.xml"
             try:
@@ -259,7 +264,7 @@ async def check_yml(site: str) -> Optional[str]:
             except:
                 pass
 
-        # проверка всех остальных путей
+        # Проверка всех остальных путей
         for scheme in schemes:
             for path in YML_PATHS:
                 url = f"{scheme}{clean_site}{path}"
@@ -271,7 +276,7 @@ async def check_yml(site: str) -> Optional[str]:
                         if resp.status == 200:
                             content_type = resp.headers.get('Content-Type', '').lower()
 
-
+                            # Более широкий диапазон content-type
                             valid_content_types = [
                                 'xml', 'text', 'application/xml', 'text/xml',
                                 'application/yaml', 'text/yaml', 'text/plain',
@@ -281,7 +286,7 @@ async def check_yml(site: str) -> Optional[str]:
                             if any(x in content_type for x in valid_content_types):
                                 text = await resp.text()
 
-
+                                # Проверяем размер содержимого (исключаем очень маленькие файлы)
                                 if len(text.strip()) < 100:  # меньше 100 символов - скорее всего пустой
                                     continue
 
@@ -368,10 +373,10 @@ async def get_yml(message: Message):
 
 async def main():
     try:
-
+        # Запускаем HTTP сервер в фоне
         asyncio.create_task(run_http_server())
 
-        # запускаем бота
+        # Запускаем бота
         await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Bot error: {e}")
