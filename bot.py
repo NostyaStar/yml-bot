@@ -12,7 +12,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiohttp import web
 
 
-# Запуск HTTP сервера для проверки здоровья
+
 async def run_http_server():
     app = web.Application()
 
@@ -148,7 +148,7 @@ def clean_url(url: str) -> str:
 
 
 def is_yml_catalog(text: str) -> bool:
-    # Очищаем текст от лишних пробелов и приводим к нижнему регистру
+
     text_clean = ' '.join(text.strip().split()).lower()
 
     # Основные обязательные признаки настоящего YML-каталога
@@ -161,7 +161,7 @@ def is_yml_catalog(text: str) -> bool:
         "<currency id="
     ]
 
-    # Дополнительные признаки для большей надежности
+    # Дополнительные признаки
     secondary_indicators = [
         "yandex-market",
         "yandex.market",
@@ -172,12 +172,12 @@ def is_yml_catalog(text: str) -> bool:
         "<picture>"
     ]
 
-    # Проверяем наличие основных обязательных элементов
-    has_required = all(indicator in text_clean for indicator in required_indicators[:3])  # Первые 3 обязательны
+ 
+    has_required = all(indicator in text_clean for indicator in required_indicators[:3])  
 
-    # Если есть основные элементы, проверяем дополнительные для уверенности
+  
     if has_required:
-        # Должен быть хотя бы один дополнительный признак
+       
         has_secondary = any(indicator in text_clean for indicator in secondary_indicators)
         return has_secondary
 
@@ -195,9 +195,9 @@ def is_valid_yml_content(text: str) -> bool:
     # Дополнительные проверки:
     text_lower = text.lower()
 
-    # Должен содержать товары (offers)
+    
     if '<offers>' in text_lower and '</offers>' in text_lower:
-        # Проверяем, что между тегами offers есть содержимое
+       
         offers_start = text_lower.find('<offers>') + len('<offers>')
         offers_end = text_lower.find('</offers>')
         offers_content = text_lower[offers_start:offers_end].strip()
@@ -205,7 +205,7 @@ def is_valid_yml_content(text: str) -> bool:
         if not offers_content or '<offer' not in offers_content:
             return False
 
-    # Должен содержать категории
+  
     if '<categories>' in text_lower and '</categories>' in text_lower:
         categories_start = text_lower.find('<categories>') + len('<categories>')
         categories_end = text_lower.find('</categories>')
@@ -289,7 +289,7 @@ async def check_yml(site: str) -> Optional[str]:
                     logging.warning(f"Ошибка для {url}: {e}")
                     continue
 
-    # Если YML не найден, возвращаем None
+ 
     return None
 
 
@@ -364,10 +364,10 @@ async def get_yml(message: Message):
 
 async def main():
     try:
-        # Запускаем HTTP сервер в фоне
+        
         asyncio.create_task(run_http_server())
 
-        # Запускаем бота
+        
         await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Bot error: {e}")
