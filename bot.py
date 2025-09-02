@@ -148,7 +148,6 @@ def clean_url(url: str) -> str:
 
 
 def is_yml_catalog(text: str) -> bool:
-
     text_clean = ' '.join(text.strip().split()).lower()
 
     # Основные обязательные признаки настоящего YML-каталога
@@ -172,14 +171,17 @@ def is_yml_catalog(text: str) -> bool:
         "<picture>"
     ]
 
- 
+    # Проверка наличия слова "Yandex" в первых 7 строчках
+    first_lines = text.split('\n')[:7]
+    has_yandex_in_first_lines = any('yandex' in line.lower() for line in first_lines)
+
+    # Основные проверки
     has_required = all(indicator in text_clean for indicator in required_indicators[:3])  
 
-  
     if has_required:
-       
         has_secondary = any(indicator in text_clean for indicator in secondary_indicators)
-        return has_secondary
+        # Если есть основные признаки И (дополнительные признаки ИЛИ Yandex в первых строках)
+        return has_secondary or has_yandex_in_first_lines
 
     return False
 
@@ -195,9 +197,7 @@ def is_valid_yml_content(text: str) -> bool:
     # Дополнительные проверки:
     text_lower = text.lower()
 
-    
     if '<offers>' in text_lower and '</offers>' in text_lower:
-       
         offers_start = text_lower.find('<offers>') + len('<offers>')
         offers_end = text_lower.find('</offers>')
         offers_content = text_lower[offers_start:offers_end].strip()
@@ -205,7 +205,6 @@ def is_valid_yml_content(text: str) -> bool:
         if not offers_content or '<offer' not in offers_content:
             return False
 
-  
     if '<categories>' in text_lower and '</categories>' in text_lower:
         categories_start = text_lower.find('<categories>') + len('<categories>')
         categories_end = text_lower.find('</categories>')
@@ -289,7 +288,6 @@ async def check_yml(site: str) -> Optional[str]:
                     logging.warning(f"Ошибка для {url}: {e}")
                     continue
 
- 
     return None
 
 
@@ -364,10 +362,7 @@ async def get_yml(message: Message):
 
 async def main():
     try:
-        
         asyncio.create_task(run_http_server())
-
-        
         await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Bot error: {e}")
