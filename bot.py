@@ -150,7 +150,7 @@ def clean_url(url: str) -> str:
 def is_yml_catalog(text: str) -> bool:
     text_clean = ' '.join(text.strip().split()).lower()
 
-    # Основные обязательные признаки настоящего YML-каталога
+    # Основные обязательные признаки YML-каталога
     required_indicators = [
         "<yml_catalog",
         "<shop>",
@@ -171,16 +171,16 @@ def is_yml_catalog(text: str) -> bool:
         "<picture>"
     ]
 
-    # Проверка наличия слова "Yandex" в первых 7 строчках
+    # проверка наличия слова "Yandex" 
     first_lines = text.split('\n')[:7]
     has_yandex_in_first_lines = any('yandex' in line.lower() for line in first_lines)
 
-    # Основные проверки
+    # основные проверки
     has_required = all(indicator in text_clean for indicator in required_indicators[:3])  
 
     if has_required:
         has_secondary = any(indicator in text_clean for indicator in secondary_indicators)
-        # Если есть основные признаки И (дополнительные признаки ИЛИ Yandex в первых строках)
+        # если есть основные признаки И (дополнительные признаки ИЛИ Yandex в первых строках)
         return has_secondary or has_yandex_in_first_lines
 
     return False
@@ -190,11 +190,11 @@ def is_valid_yml_content(text: str) -> bool:
     """
     Более строгая проверка содержимого YML
     """
-    # Проверяем базовую структуру
+    
     if not is_yml_catalog(text):
         return False
 
-    # Дополнительные проверки:
+    # дополнительные проверки:
     text_lower = text.lower()
 
     if '<offers>' in text_lower and '</offers>' in text_lower:
@@ -228,7 +228,7 @@ async def check_yml(site: str) -> Optional[str]:
 
         clean_site = clean_url(site)
 
-        # Проверка для InSales
+        # проверка для InSales
         if ".myinsales.ru" not in clean_site and "insales" not in clean_site:
             insales_url = f"https://{clean_site}.myinsales.ru/market.yml"
             try:
@@ -243,7 +243,7 @@ async def check_yml(site: str) -> Optional[str]:
             except:
                 pass
 
-        # Проверка для Ecwid
+        # проверка для Ecwid
         if ".ecwid.com" not in clean_site and "ecwid" not in clean_site:
             ecwid_url = f"https://{clean_site}.ecwid.com/market.xml"
             try:
@@ -257,7 +257,7 @@ async def check_yml(site: str) -> Optional[str]:
             except:
                 pass
 
-        # Проверка всех остальных путей
+        # проверка всех остальных путей
         for scheme in schemes:
             for path in YML_PATHS:
                 url = f"{scheme}{clean_site}{path}"
@@ -273,7 +273,7 @@ async def check_yml(site: str) -> Optional[str]:
                                    ['xml', 'text', 'application/xml', 'text/xml', 'application/yaml', 'text/yaml']):
                                 text = await resp.text()
 
-                                # Строгая проверка YML
+                                # строгая проверка YML
                                 if is_valid_yml_content(text):
                                     logging.info(f"✅ Найден настоящий YML: {url}")
                                     return url
