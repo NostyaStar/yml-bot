@@ -10,37 +10,26 @@ import re
 import os
 from aiogram.client.default import DefaultBotProperties
 from aiohttp import web
-import threading
 
 
-def run_http_server():
 
+async def run_http_server():
+    app = web.Application()
 
     async def handle(request):
         return web.Response(text="Bot is running!")
 
-    app = web.Application()
-    app.router.add_get('/', handle)
-
     async def health_check(request):
         return web.json_response({"status": "ok", "service": "yml-checker-bot"})
 
+    app.router.add_get('/', handle)
     app.router.add_get('/health', health_check)
 
-
-    async def start_server():
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, host='0.0.0.0', port=8080)
-        await site.start()
-        print("HTTP server started on port 8080")
-
-        await asyncio.Event().wait()
-
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_server())
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host='0.0.0.0', port=8080)
+    await site.start()
+    print("HTTP server started on port 8080")
 
 
 API_TOKEN = os.getenv("API_TOKEN", "8374508374:AAGFkSRbZpTJ53QeS5wbpZVLzxOqvQ3BcR4")
@@ -152,7 +141,6 @@ ssl_context.verify_mode = ssl.CERT_NONE
 
 
 def clean_url(url: str) -> str:
-
     url = url.strip()
     url = re.sub(r'^https?://', '', url)
     url = url.rstrip('/')
@@ -161,37 +149,76 @@ def clean_url(url: str) -> str:
 
 def is_yml_catalog(text: str) -> bool:
 
-    text_lower = text.lower()
 
-    # Проверяем различные признаки YML
-    yml_indicators = [
-        "<yml_catalog",
-        "yandex-market",
-        "yandex.market",
-        "market.yml",
-        "яндекс.маркет",
-        "offer id=",
-        "currency id=",
-        "category id=",
-        "<shop>",
-        "<offers>",
-        "<categories>"
+    text_clean = ' '.join(text.strip().split()).lower()
+
+
+    first_lines = text.strip().split('\n')[:7]
+    has_yandex_in_header = any('yandex' in line.lower() for line in first_lines)
+
+    # различные форматы YML каталогов
+    yml_formats = [
+        # стандартный Yandex.Market
+        ("<yml_catalog", ["<shop>", "<offers>", "<offer"]),
+        # альтернативные форматы
+        ("<catalog", ["<product", "<item", "<offer"]),
+        ("<products", ["<product", "<item"]),
+        ("<offers", ["<offer"]),
+        ("<items", ["<item"]),
+        # просто наличие товаров
+        ("<offer", ["id=", "available="]),
+        ("<product", ["id=", "price="]),
+        ("<item", ["id=", "price="])
     ]
 
-    # Должен содержать хотя бы один основной индикатор
-    main_indicators = ["<yml_catalog", "yandex-market", "yandex.market"]
+    # проверяем различные форматы
+    for format_pattern, required_tags in yml_formats:
+        if format_pattern in text_clean:
+            # проверяем наличие обязательных тегов для этого формата
+            has_required_tags = all(tag in text_clean for tag in required_tags)
+            if has_required_tags:
+                return True
 
-    has_main_indicator = any(indicator in text_lower for indicator in main_indicators)
-    has_any_indicator = any(indicator in text_lower for indicator in yml_indicators)
+    # дополнительные проверки
+    if any(tag in text_clean for tag in ["<currency", "<category", "<price>", "<url>"]):
+        # проверяем, что это не просто HTML страница
+        if not any(html_tag in text_clean for html_tag in ["<html", "<body", "<div ", "<span ", "<!doctype html"]):
+            return True
 
 
-    is_xml_like = text.strip().startswith('<?xml') or '<' in text and '>' in text
+    if has_yandex_in_header and '<' in text and '>' in text:
+        # исключаем HTML страницы
+        if not any(html_tag in text_clean for html_tag in ["<html", "<body", "<!doctype html", "<head>"]):
+            return True
 
-    return has_main_indicator or (has_any_indicator and is_xml_like)
+    return False
+
+
+def is_valid_yml_content(text: str) -> bool:
+
+    # базовые проверки
+    if not text.strip():
+        return False
+
+    text_lower = text.lower()
+
+    # игнорируем HTML страницы
+    if any(html_tag in text_lower for html_tag in ["<html", "<body", "<!doctype html", "<head>"]):
+        return False
+
+    # игнорируем ошибки и пустые ответы
+    if any(error in text_lower for error in ["error", "not found", "404", "500", "403 forbidden"]):
+        return False
+
+    # проверяем, что это XML-подобный контент
+    if not ('<' in text and '>' in text):
+        return False
+
+    # основная проверка на YML каталог
+    return is_yml_catalog(text)
 
 
 async def check_yml(site: str) -> Optional[str]:
-
     schemes = ["https://", "http://"]
     connector = aiohttp.TCPConnector(ssl=ssl_context, limit=20)
 
@@ -213,14 +240,13 @@ async def check_yml(site: str) -> Optional[str]:
                         if any(x in content_type for x in
                                ['xml', 'text', 'application/xml', 'text/xml', 'application/yaml']):
                             text = await resp.text()
-                            if is_yml_catalog(text):
+                            if is_valid_yml_content(text):
                                 return insales_url
             except:
                 pass
 
 
         if ".ecwid.com" not in clean_site and "ecwid" not in clean_site:
-            # Пробуем найти ID магазина в основном домене
             ecwid_url = f"https://{clean_site}.ecwid.com/market.xml"
             try:
                 async with session.get(ecwid_url, allow_redirects=True) as resp:
@@ -228,12 +254,12 @@ async def check_yml(site: str) -> Optional[str]:
                         content_type = resp.headers.get('Content-Type', '').lower()
                         if any(x in content_type for x in ['xml', 'text', 'application/xml', 'text/xml']):
                             text = await resp.text()
-                            if is_yml_catalog(text):
+                            if is_valid_yml_content(text):
                                 return ecwid_url
             except:
                 pass
 
-        # Проверка всех остальных путей
+        # проверка всех остальных путей
         for scheme in schemes:
             for path in YML_PATHS:
                 url = f"{scheme}{clean_site}{path}"
@@ -242,19 +268,28 @@ async def check_yml(site: str) -> Optional[str]:
                     logging.info(f"Проверяем: {url}")
 
                     async with session.get(url, allow_redirects=True) as resp:
-
                         if resp.status == 200:
                             content_type = resp.headers.get('Content-Type', '').lower()
 
 
-                            if any(x in content_type for x in
-                                   ['xml', 'text', 'application/xml', 'text/xml', 'application/yaml', 'text/yaml']):
+                            valid_content_types = [
+                                'xml', 'text', 'application/xml', 'text/xml',
+                                'application/yaml', 'text/yaml', 'text/plain',
+                                'application/octet-stream'
+                            ]
+
+                            if any(x in content_type for x in valid_content_types):
                                 text = await resp.text()
 
-                                # Более гибкая проверка YML
-                                if is_yml_catalog(text):
+
+                                if len(text.strip()) < 100:  # меньше 100 символов - скорее всего пустой
+                                    continue
+
+                                if is_valid_yml_content(text):
                                     logging.info(f"✅ Найден YML: {url}")
                                     return url
+                                else:
+                                    logging.info(f"❌ Файл найден, но не является YML: {url}")
 
                 except aiohttp.ClientConnectorError:
                     continue
@@ -263,16 +298,6 @@ async def check_yml(site: str) -> Optional[str]:
                 except Exception as e:
                     logging.warning(f"Ошибка для {url}: {e}")
                     continue
-
-        # Если YML не найден, возвращаем главную страницу
-        for scheme in schemes:
-            main_url = f"{scheme}{clean_site}"
-            try:
-                async with session.get(main_url, timeout=5) as resp:
-                    if resp.status == 200:
-                        return main_url
-            except:
-                continue
 
     return None
 
@@ -290,18 +315,14 @@ async def help_command(message: Message):
 1. Просто отправьте мне домен сайта (например: wildberries.ru)
 2. Я проверю более 50 популярных путей к YML-каталогам
 3. Если найду YML - покажу прямую ссылку на него
-4. Если не найду - покажу главную страницу сайта
+4. Если не найду - покажу сообщение, что не удалось найти
 
 💡 Примеры использования:
 - `wildberries.ru`
 - `ozon.ru`
 - `example.com`
 
-Бот поддерживает проверку для всех популярных CMS:
-- 1С-Битрикс, InSales, Ecwid
-- WooCommerce, Shopify
-- OpenCart, PrestaShop, CS-Cart
-- И многих других
+Бот поддерживает различные форматы YML/XML каталогов
     """
     await message.answer(help_text)
 
@@ -316,13 +337,13 @@ async def about_command(message: Message):
     about_text = """
 🤖 О боте
 
-Этот бот помогает находить YML-каталоги на сайтах. YML (Yandex Market Language) - это формат для выгрузки товаров в маркетплейсы.
+Этот бот помогает находить YML/XML каталоги товаров на сайтах.
 
-📊 Что умеет бот:
-- Проверять более 50 популярных путей к YML-каталогам
-- Работать с различными CMS и платформами
-- Находить каталоги для Яндекс.Маркета, Wildberries, Ozon
-- Автоматически определять структуру сайта
+📊 Поддерживаемые форматы:
+- Стандартный Yandex.Market (yml_catalog)
+- Альтернативные XML форматы
+- Каталоги товаров различных CMS
+- Выгрузки для маркетплейсов
 
 ⚡ Быстро и удобно!
     """
@@ -331,7 +352,6 @@ async def about_command(message: Message):
 
 @dp.message()
 async def get_yml(message: Message):
-
     if message.text.startswith('/'):
         return
 
@@ -341,38 +361,20 @@ async def get_yml(message: Message):
     result_url = await check_yml(site)
 
     if result_url:
-        await message.answer(f"🔗 Результат:\n{result_url}")
+        await message.answer(f"✅ Найден каталог товаров:\n{result_url}")
     else:
-        await message.answer("❌ Не удалось найти доступный сайт")
+        await message.answer("❌ Не получилось найти YML/XML каталог")
 
 
 async def main():
     try:
-        asyncio.create_task(run_http_server_async())
 
-        # Запускаем бота
+        asyncio.create_task(run_http_server())
+
+        # запускаем бота
         await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Bot error: {e}")
-
-
-async def run_http_server_async():
-    app = web.Application()
-
-    async def handle(request):
-        return web.Response(text="Bot is running!")
-
-    async def health_check(request):
-        return web.json_response({"status": "ok", "service": "yml-checker-bot"})
-
-    app.router.add_get('/', handle)
-    app.router.add_get('/health', health_check)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, host='0.0.0.0', port=8080)
-    await site.start()
-    logger.info("HTTP server started on port 8080")
 
 
 if __name__ == "__main__":
