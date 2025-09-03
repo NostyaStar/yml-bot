@@ -44,7 +44,7 @@ bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
 YML_PATHS = [
-    # Основные универсальные пути
+    # Основные универсальные пути 
     "/yandex.xml",
     "/yml.xml",
     "/market.yml",
